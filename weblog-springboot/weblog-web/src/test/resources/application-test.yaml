@@ -1,0 +1,38 @@
+spring:
+  profiles:
+    active: test
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-test.sql
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+server:
+  port: 0
+
+jwt:
+  issuer: test
+  secret: dGVzdFNlY3JldEtleUZvclRlc3RpbmdQdXJwb3Nlc09ubHkxMjM0NTY3ODkwYWJjZGVm
+  tokenExpireTime: 1440
+  tokenHeaderKey: Authorization
+  tokenPrefix: Bearer
+
+minio:
+  endpoint: http://localhost:9000
+  accessKey: test
+  secretKey: testkey
+  bucketName: test
