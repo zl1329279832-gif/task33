@@ -173,5 +173,31 @@ CREATE TABLE `t_user_role`
     INDEX         `idx_username`(`username`) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 3 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '用户角色表' ROW_FORMAT = Dynamic;
 
+-- ----------------------------
+-- Table structure for t_article_version
+-- ----------------------------
+DROP TABLE IF EXISTS `t_article_version`;
+CREATE TABLE `t_article_version`
+(
+    `id`           bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '版本id',
+    `article_id`   bigint(20) NOT NULL DEFAULT 0 COMMENT '文章id',
+    `version_num`  int(11) NOT NULL DEFAULT 1 COMMENT '版本号',
+    `status`       tinyint(2) NOT NULL DEFAULT 0 COMMENT '版本状态：0=草稿，1=待发布，2=已发布，3=已回滚',
+    `title`        varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT '文章标题',
+    `title_image`  varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT '' COMMENT '文章题图',
+    `description`  varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT '文章描述',
+    `content`      text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL COMMENT '正文内容',
+    `category_id`  bigint(20) NOT NULL DEFAULT 0 COMMENT '分类id',
+    `tag_ids`      varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT '标签id列表，逗号分隔',
+    `scheduled_at` datetime NULL DEFAULT NULL COMMENT '定时发布时间',
+    `published_at` datetime NULL DEFAULT NULL COMMENT '实际发布时间',
+    `create_time`  datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一次更新时间',
+    `is_deleted`   tinyint(2) NOT NULL DEFAULT 0 COMMENT '删除标志位：0：未删除 1：已删除',
+    PRIMARY KEY (`id`) USING BTREE,
+    INDEX          `idx_article_id`(`article_id`) USING BTREE,
+    INDEX          `idx_status_scheduled`(`status`, `scheduled_at`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '文章版本表' ROW_FORMAT = Dynamic;
+
 SET
 FOREIGN_KEY_CHECKS = 1;

@@ -7,6 +7,8 @@ import com.quanxiaoha.weblog.common.domain.dos.*;
 import com.quanxiaoha.weblog.admin.model.vo.article.*;
 import com.quanxiaoha.weblog.admin.service.AdminArticleService;
 import com.quanxiaoha.weblog.common.Response;
+import com.quanxiaoha.weblog.common.enums.ArticleVersionStatusEnum;
+import com.quanxiaoha.weblog.common.enums.ResponseCodeEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -15,8 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.CollectionUtils;
 
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -39,6 +40,8 @@ public class AdminArticleServiceImpl implements AdminArticleService {
     private AdminTagDao tagDao;
     @Autowired
     private AdminArticleTagRelDao articleTagRelDao;
+    @Autowired
+    private AdminArticleVersionDao articleVersionDao;
 
     // 手动事务
     private final TransactionTemplate transactionTemplate;
@@ -97,6 +100,29 @@ public class AdminArticleServiceImpl implements AdminArticleService {
         List<ArticleTagRelDO> articleTagRelDOS = articleTagRelDao.selectByArticleId(articleId);
         List<Long> tagIds = articleTagRelDOS.stream().map(p -> p.getTagId()).collect(Collectors.toList());
 
+        // 检查是否存在草稿版本，如果有则优先返回草稿数据
+        ArticleVersionDO draftVersion = articleVersionDao.selectLatestDraftByArticleId(articleId);
+        if (draftVersion != null) {
+            List<Long> draftTagIds = new ArrayList<>();
+            if (draftVersion.getTagIds() != null && !draftVersion.getTagIds().isEmpty()) {
+                for (String id : draftVersion.getTagIds().split(",")) {
+                    if (!id.trim().isEmpty()) {
+                        draftTagIds.add(Long.valueOf(id.trim()));
+                    }
+                }
+            }
+            QueryArticleDetailRspVO rspVO = QueryArticleDetailRspVO.builder()
+                    .id(articleDO.getId())
+                    .title(draftVersion.getTitle())
+                    .titleImage(draftVersion.getTitleImage())
+                    .content(draftVersion.getContent())
+                    .categoryId(draftVersion.getCategoryId())
+                    .tagIds(draftTagIds)
+                    .description(draftVersion.getDescription())
+                    .build();
+            return Response.success(rspVO);
+        }
+
         QueryArticleDetailRspVO queryArticleDetailRspVO = QueryArticleDetailRspVO.builder()
                 .id(articleDO.getId())
                 .title(articleDO.getTitle())
@@ -129,6 +155,8 @@ public class AdminArticleServiceImpl implements AdminArticleService {
         Long articleId = deleteArticleReqVO.getArticleId();
         articleDao.deleteById(articleId);
         articleContentDao.deleteByArticleId(articleId);
+        // 软删除该文章的所有版本
+        articleVersionDao.softDeleteByArticleId(articleId);
         return Response.success();
     }
 
@@ -170,6 +198,270 @@ public class AdminArticleServiceImpl implements AdminArticleService {
         });
 
         return isExecuteSuccess ? Response.success() : Response.fail();
+    }
+
+    @Override
+    public Response saveDraft(SaveDraftReqVO saveDraftReqVO) {
+        Long articleId = saveDraftReqVO.getArticleId();
+
+        // 解析标签为ID列表
+        String tagIdsStr = resolveTagIds(saveDraftReqVO.getTags());
+
+        if (articleId == null || articleId == 0) {
+            // 新文章草稿，不写入线上表
+            ArticleVersionDO versionDO = ArticleVersionDO.builder()
+                    .articleId(0L)
+                    .versionNum(1)
+                    .status(ArticleVersionStatusEnum.DRAFT.getCode())
+                    .title(saveDraftReqVO.getTitle())
+                    .titleImage(saveDraftReqVO.getTitleImage())
+                    .description(saveDraftReqVO.getDescription())
+                    .content(saveDraftReqVO.getContent())
+                    .categoryId(saveDraftReqVO.getCategoryId())
+                    .tagIds(tagIdsStr)
+                    .createTime(new Date())
+                    .updateTime(new Date())
+                    .isDeleted(false)
+                    .build();
+            articleVersionDao.insert(versionDO);
+            return Response.success(versionDO);
+        }
+
+        // 已有文章，查找已有草稿
+        ArticleVersionDO existingDraft = articleVersionDao.selectLatestDraftByArticleId(articleId);
+        if (existingDraft != null) {
+            // 更新现有草稿
+            existingDraft.setTitle(saveDraftReqVO.getTitle());
+            existingDraft.setTitleImage(saveDraftReqVO.getTitleImage());
+            existingDraft.setDescription(saveDraftReqVO.getDescription());
+            existingDraft.setContent(saveDraftReqVO.getContent());
+            existingDraft.setCategoryId(saveDraftReqVO.getCategoryId());
+            existingDraft.setTagIds(tagIdsStr);
+            existingDraft.setUpdateTime(new Date());
+            articleVersionDao.updateById(existingDraft);
+            return Response.success(existingDraft);
+        }
+
+        // 创建新版本
+        Integer maxVersionNum = articleVersionDao.selectMaxVersionNum(articleId);
+        ArticleVersionDO versionDO = ArticleVersionDO.builder()
+                .articleId(articleId)
+                .versionNum(maxVersionNum + 1)
+                .status(ArticleVersionStatusEnum.DRAFT.getCode())
+                .title(saveDraftReqVO.getTitle())
+                .titleImage(saveDraftReqVO.getTitleImage())
+                .description(saveDraftReqVO.getDescription())
+                .content(saveDraftReqVO.getContent())
+                .categoryId(saveDraftReqVO.getCategoryId())
+                .tagIds(tagIdsStr)
+                .createTime(new Date())
+                .updateTime(new Date())
+                .isDeleted(false)
+                .build();
+        articleVersionDao.insert(versionDO);
+        return Response.success(versionDO);
+    }
+
+    @Override
+    public Response publishVersion(PublishVersionReqVO publishVersionReqVO) {
+        Long versionId = publishVersionReqVO.getVersionId();
+        ArticleVersionDO version = articleVersionDao.selectById(versionId);
+
+        if (version == null) {
+            return Response.fail(ResponseCodeEnum.VERSION_NOT_FOUND);
+        }
+
+        if (version.getStatus().equals(ArticleVersionStatusEnum.PUBLISHED.getCode())) {
+            return Response.fail(ResponseCodeEnum.VERSION_ALREADY_PUBLISHED);
+        }
+
+        if (!version.getStatus().equals(ArticleVersionStatusEnum.DRAFT.getCode())) {
+            return Response.fail(ResponseCodeEnum.VERSION_NOT_DRAFT);
+        }
+
+        // 定时发布
+        Date scheduledAt = publishVersionReqVO.getScheduledAt();
+        if (scheduledAt != null && scheduledAt.after(new Date())) {
+            version.setStatus(ArticleVersionStatusEnum.PENDING_PUBLISH.getCode());
+            version.setScheduledAt(scheduledAt);
+            version.setUpdateTime(new Date());
+            articleVersionDao.updateById(version);
+            return Response.success();
+        }
+
+        // 立即发布
+        publishVersionToLive(version);
+        return Response.success();
+    }
+
+    @Override
+    public void publishVersionToLive(ArticleVersionDO version) {
+        transactionTemplate.execute(status -> {
+            Long articleId = version.getArticleId();
+
+            if (articleId == null || articleId == 0) {
+                // 新文章首次发布，创建文章记录
+                ArticleDO articleDO = ArticleDO.builder()
+                        .title(version.getTitle())
+                        .titleImage(version.getTitleImage())
+                        .description(version.getDescription())
+                        .build();
+                articleDao.insertArticle(articleDO);
+                articleId = articleDO.getId();
+                version.setArticleId(articleId);
+            } else {
+                // 更新已有文章（不更新 readNum）
+                ArticleDO articleDO = ArticleDO.builder()
+                        .id(articleId)
+                        .title(version.getTitle())
+                        .titleImage(version.getTitleImage())
+                        .description(version.getDescription())
+                        .updateTime(new Date())
+                        .build();
+                articleDao.updateById(articleDO);
+            }
+
+            // 更新文章内容
+            articleContentDao.deleteByArticleId(articleId);
+            ArticleContentDO articleContentDO = ArticleContentDO.builder()
+                    .articleId(articleId)
+                    .content(version.getContent())
+                    .build();
+            articleContentDao.insertArticleContent(articleContentDO);
+
+            // 更新文章分类
+            articleCategoryRelDao.deleteByArticleId(articleId);
+            ArticleCategoryRelDO articleCategoryRelDO = ArticleCategoryRelDO.builder()
+                    .articleId(articleId)
+                    .categoryId(version.getCategoryId())
+                    .build();
+            articleCategoryRelDao.insert(articleCategoryRelDO);
+
+            // 更新文章标签
+            articleTagRelDao.deleteByArticleId(articleId);
+            if (version.getTagIds() != null && !version.getTagIds().isEmpty()) {
+                List<ArticleTagRelDO> tagRelDOS = Lists.newArrayList();
+                for (String tagIdStr : version.getTagIds().split(",")) {
+                    if (!tagIdStr.trim().isEmpty()) {
+                        ArticleTagRelDO tagRelDO = ArticleTagRelDO.builder()
+                                .articleId(version.getArticleId())
+                                .tagId(Long.valueOf(tagIdStr.trim()))
+                                .build();
+                        tagRelDOS.add(tagRelDO);
+                    }
+                }
+                if (!tagRelDOS.isEmpty()) {
+                    articleTagRelDao.insertBatch(tagRelDOS);
+                }
+            }
+
+            // 将该文章之前的已发布版本标记为已回滚
+            List<ArticleVersionDO> publishedVersions = articleVersionDao.selectPublishedVersionsByArticleId(version.getArticleId());
+            for (ArticleVersionDO pv : publishedVersions) {
+                pv.setStatus(ArticleVersionStatusEnum.ROLLBACK.getCode());
+                pv.setUpdateTime(new Date());
+                articleVersionDao.updateById(pv);
+            }
+
+            // 设置当前版本为已发布
+            version.setStatus(ArticleVersionStatusEnum.PUBLISHED.getCode());
+            version.setPublishedAt(new Date());
+            version.setUpdateTime(new Date());
+            articleVersionDao.updateById(version);
+
+            return true;
+        });
+    }
+
+    @Override
+    public Response rollbackVersion(RollbackVersionReqVO rollbackVersionReqVO) {
+        Long targetVersionId = rollbackVersionReqVO.getTargetVersionId();
+        ArticleVersionDO targetVersion = articleVersionDao.selectById(targetVersionId);
+
+        if (targetVersion == null) {
+            return Response.fail(ResponseCodeEnum.VERSION_NOT_FOUND);
+        }
+
+        if (!targetVersion.getStatus().equals(ArticleVersionStatusEnum.PUBLISHED.getCode())
+                && !targetVersion.getStatus().equals(ArticleVersionStatusEnum.ROLLBACK.getCode())) {
+            return Response.fail(ResponseCodeEnum.ROLLBACK_TARGET_NOT_PUBLISHED);
+        }
+
+        // 创建新版本（基于目标版本的快照）
+        Integer maxVersionNum = articleVersionDao.selectMaxVersionNum(targetVersion.getArticleId());
+        ArticleVersionDO newVersion = ArticleVersionDO.builder()
+                .articleId(targetVersion.getArticleId())
+                .versionNum(maxVersionNum + 1)
+                .status(ArticleVersionStatusEnum.DRAFT.getCode())
+                .title(targetVersion.getTitle())
+                .titleImage(targetVersion.getTitleImage())
+                .description(targetVersion.getDescription())
+                .content(targetVersion.getContent())
+                .categoryId(targetVersion.getCategoryId())
+                .tagIds(targetVersion.getTagIds())
+                .createTime(new Date())
+                .updateTime(new Date())
+                .isDeleted(false)
+                .build();
+        articleVersionDao.insert(newVersion);
+
+        // 立即发布该新版本
+        publishVersionToLive(newVersion);
+        return Response.success();
+    }
+
+    @Override
+    public Response queryArticleVersionList(QueryVersionListReqVO queryVersionListReqVO) {
+        Long articleId = queryVersionListReqVO.getArticleId();
+        List<ArticleVersionDO> versions = articleVersionDao.selectByArticleId(articleId);
+
+        List<QueryVersionListRspVO> rspList = versions.stream().map(v ->
+                QueryVersionListRspVO.builder()
+                        .id(v.getId())
+                        .articleId(v.getArticleId())
+                        .versionNum(v.getVersionNum())
+                        .status(v.getStatus())
+                        .title(v.getTitle())
+                        .description(v.getDescription())
+                        .categoryId(v.getCategoryId())
+                        .tagIds(v.getTagIds())
+                        .scheduledAt(v.getScheduledAt())
+                        .publishedAt(v.getPublishedAt())
+                        .createTime(v.getCreateTime())
+                        .build()
+        ).collect(Collectors.toList());
+
+        return Response.success(rspList);
+    }
+
+    @Override
+    public Response queryVersionDiff(Long versionId1, Long versionId2) {
+        ArticleVersionDO v1 = articleVersionDao.selectById(versionId1);
+        ArticleVersionDO v2 = articleVersionDao.selectById(versionId2);
+
+        if (v1 == null || v2 == null) {
+            return Response.fail(ResponseCodeEnum.VERSION_NOT_FOUND);
+        }
+
+        VersionDiffRspVO diffRspVO = VersionDiffRspVO.builder()
+                .oldTitle(v1.getTitle())
+                .newTitle(v2.getTitle())
+                .oldContent(v1.getContent())
+                .newContent(v2.getContent())
+                .oldDescription(v1.getDescription())
+                .newDescription(v2.getDescription())
+                .oldCategoryId(v1.getCategoryId())
+                .newCategoryId(v2.getCategoryId())
+                .oldTagIds(v1.getTagIds())
+                .newTagIds(v2.getTagIds())
+                .titleChanged(!Objects.equals(v1.getTitle(), v2.getTitle()))
+                .contentChanged(!Objects.equals(v1.getContent(), v2.getContent()))
+                .descriptionChanged(!Objects.equals(v1.getDescription(), v2.getDescription()))
+                .categoryChanged(!Objects.equals(v1.getCategoryId(), v2.getCategoryId()))
+                .tagsChanged(!Objects.equals(v1.getTagIds(), v2.getTagIds()))
+                .build();
+
+        return Response.success(diffRspVO);
     }
 
     /**
@@ -224,6 +516,40 @@ public class AdminArticleServiceImpl implements AdminArticleService {
             });
             articleTagRelDao.insertBatch(articleTagRelDOS);
         }
+    }
+
+    /**
+     * 将标签列表（可能是ID或名称）解析为逗号分隔的ID字符串
+     * 不写入 t_article_tag_rel，仅用于版本快照
+     */
+    public String resolveTagIds(List<String> tags) {
+        if (CollectionUtils.isEmpty(tags)) {
+            return "";
+        }
+
+        List<TagDO> allTags = tagDao.selectAll();
+        List<String> existingTagIds = Collections.emptyList();
+        if (!CollectionUtils.isEmpty(allTags)) {
+            existingTagIds = allTags.stream().map(t -> String.valueOf(t.getId())).collect(Collectors.toList());
+        }
+
+        List<Long> resolvedIds = new ArrayList<>();
+        for (String tag : tags) {
+            if (existingTagIds.contains(tag)) {
+                resolvedIds.add(Long.valueOf(tag));
+            } else {
+                // 新标签名称，先创建
+                TagDO newTag = TagDO.builder()
+                        .name(tag)
+                        .createTime(new Date())
+                        .updateTime(new Date())
+                        .build();
+                tagDao.insert(newTag);
+                resolvedIds.add(newTag.getId());
+            }
+        }
+
+        return resolvedIds.stream().map(String::valueOf).collect(Collectors.joining(","));
     }
 
 }

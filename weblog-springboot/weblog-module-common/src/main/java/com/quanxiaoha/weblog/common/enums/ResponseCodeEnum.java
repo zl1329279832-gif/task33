@@ -28,6 +28,11 @@ public enum ResponseCodeEnum implements BaseExceptionInterface {
     DUPLICATE_TAG_ERROR("10008", "提交的部分标签已被创建"),
     DUPLICATE_CATEGORY_ERROR("10009", "该分类已被创建"),
     TOKEN_EXPIRED("10010", "Token 已过期"),
+    VERSION_NOT_FOUND("10011", "文章版本不存在"),
+    VERSION_ALREADY_PUBLISHED("10012", "该版本已发布，不能重复发布"),
+    VERSION_NOT_DRAFT("10013", "只能发布草稿状态的版本"),
+    ROLLBACK_TARGET_NOT_PUBLISHED("10014", "只能回滚到已发布的版本"),
+    ARTICLE_NOT_FOUND("10015", "文章不存在"),
     ;
 
     private String errorCode;
