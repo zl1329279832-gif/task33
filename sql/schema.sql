@@ -32,6 +32,7 @@ CREATE TABLE `t_article`
     `update_time` datetime                                                      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一次更新时间',
     `is_deleted`  tinyint(2) NOT NULL DEFAULT 0 COMMENT '删除标志位：0：未删除 1：已删除',
     `read_num`    int(11) UNSIGNED NOT NULL DEFAULT 1 COMMENT '被阅读次数',
+    `current_version_id` bigint(20) UNSIGNED DEFAULT NULL COMMENT '当前生效版本ID',
     PRIMARY KEY (`id`) USING BTREE,
     INDEX         `idx_create_time`(`create_time`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '文章表' ROW_FORMAT = Dynamic;

@@ -151,4 +151,17 @@ public class AdminArticleVersionDaoImpl implements AdminArticleVersionDao {
                 .set(ArticleVersionDO::getIsDeleted, true);
         return articleVersionMapper.update(null, wrapper);
     }
+
+    @Override
+    public int invalidatePendingPublishByArticleId(Long articleId, Long excludeVersionId) {
+        UpdateWrapper<ArticleVersionDO> wrapper = new UpdateWrapper<>();
+        wrapper.lambda()
+                .eq(ArticleVersionDO::getArticleId, articleId)
+                .eq(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.PENDING_PUBLISH.getCode())
+                .eq(ArticleVersionDO::getIsDeleted, false)
+                .ne(excludeVersionId != null, ArticleVersionDO::getId, excludeVersionId)
+                .set(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.DRAFT.getCode())
+                .set(ArticleVersionDO::getScheduledAt, null);
+        return articleVersionMapper.update(null, wrapper);
+    }
 }

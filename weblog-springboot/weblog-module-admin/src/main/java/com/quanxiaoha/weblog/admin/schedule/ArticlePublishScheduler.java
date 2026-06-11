@@ -2,6 +2,7 @@ package com.quanxiaoha.weblog.admin.schedule;
 
 import com.quanxiaoha.weblog.admin.dao.AdminArticleVersionDao;
 import com.quanxiaoha.weblog.admin.service.impl.AdminArticleServiceImpl;
+import com.quanxiaoha.weblog.common.Response;
 import com.quanxiaoha.weblog.common.domain.dos.ArticleVersionDO;
 import com.quanxiaoha.weblog.common.enums.ArticleVersionStatusEnum;
 import lombok.extern.slf4j.Slf4j;
@@ -48,18 +49,26 @@ public class ArticlePublishScheduler {
                         ArticleVersionStatusEnum.PUBLISHED.getCode()
                 );
                 if (updated == 0) {
-                    log.info("版本 {} 已被其他实例处理", version.getId());
+                    log.info("版本 {} 已被其他实例处理或已失效", version.getId());
                     continue;
                 }
 
                 // 物化到 live 表（状态已在 CAS 中更新）
-                articleService.publishScheduledVersion(version);
-
-                log.info("版本 {} 定时发布成功", version.getId());
+                // publishScheduledVersion 内部处理 StaleVersionException 和其他异常
+                Response response = articleService.publishScheduledVersion(version);
+                if (response.isSuccess()) {
+                    log.info("版本 {} 定时发布成功", version.getId());
+                } else {
+                    log.warn("版本 {} 定时发布未成功: {}", version.getId(), response.getMessage());
+                }
             } catch (Exception e) {
-                log.error("版本 {} 定时发布失败: {}", version.getId(), e.getMessage(), e);
-                // 标记为草稿供管理员重试
-                articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+                log.error("版本 {} 定时发布异常: {}", version.getId(), e.getMessage(), e);
+                // 安全兜底：标记为草稿供管理员重试
+                try {
+                    articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+                } catch (Exception resetEx) {
+                    log.error("重置版本 {} 状态失败", version.getId(), resetEx);
+                }
             }
         }
     }

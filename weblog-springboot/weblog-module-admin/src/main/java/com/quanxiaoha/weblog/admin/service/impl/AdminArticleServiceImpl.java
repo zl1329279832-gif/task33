@@ -5,6 +5,7 @@ import com.google.common.collect.Lists;
 import com.quanxiaoha.weblog.admin.dao.*;
 import com.quanxiaoha.weblog.common.domain.dos.*;
 import com.quanxiaoha.weblog.admin.model.vo.article.*;
+import com.quanxiaoha.weblog.admin.exception.StaleVersionException;
 import com.quanxiaoha.weblog.admin.service.AdminArticleService;
 import com.quanxiaoha.weblog.common.Response;
 import com.quanxiaoha.weblog.common.enums.ArticleVersionStatusEnum;
@@ -217,6 +218,11 @@ public class AdminArticleServiceImpl implements AdminArticleService {
             version.setStatus(ArticleVersionStatusEnum.PENDING_PUBLISH.getCode());
             version.setScheduledAt(req.getScheduledAt());
             articleVersionDao.updateById(version);
+            // 取消该文章的其他待发布任务
+            if (version.getArticleId() != 0L) {
+                articleVersionDao.invalidatePendingPublishByArticleId(
+                        version.getArticleId(), version.getId());
+            }
             return Response.success();
         }
 
@@ -340,6 +346,11 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                     .publishedAt(new Date())
                     .build();
             articleVersionDao.insert(rollbackVersion);
+
+            // 取消该文章的所有待发布任务，防止定时发布覆盖回滚
+            articleVersionDao.invalidatePendingPublishByArticleId(
+                    req.getArticleId(), rollbackVersion.getId());
+
             return Response.success();
         });
     }
@@ -365,10 +376,11 @@ public class AdminArticleServiceImpl implements AdminArticleService {
 
     /**
      * 定时发布调度器调用：状态已由 CAS 更新为 PUBLISHED，只需物化到 live 表
+     * 发布失败时在独立事务中恢复
      */
     public Response publishScheduledVersion(ArticleVersionDO version) {
-        return transactionTemplate.execute(status -> {
-            try {
+        try {
+            return transactionTemplate.execute(status -> {
                 Long articleId;
                 if (version.getArticleId() == 0L) {
                     articleId = materializeVersion(version);
@@ -381,27 +393,48 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                 version.setPublishedAt(new Date());
                 articleVersionDao.updateById(version);
 
+                // 取消该文章的其他待发布任务
+                articleVersionDao.invalidatePendingPublishByArticleId(
+                        articleId, version.getId());
+
                 return Response.success();
-            } catch (Exception e) {
-                log.error("定时发布版本 {} 失败", version.getId(), e);
-                status.setRollbackOnly();
-
-                if (version.getArticleId() != 0L) {
-                    rollbackToPreviousVersion(version.getArticleId(), version.getId());
-                }
-
+            });
+        } catch (StaleVersionException e) {
+            log.info("定时发布版本 {} 被跳过（已有更新版本生效）: {}", version.getId(), e.getMessage());
+            // 版本已过时，不需要恢复 live 表，只需重置状态
+            try {
                 articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
-                return Response.fail("定时发布失败: " + e.getMessage());
+            } catch (Exception resetEx) {
+                log.error("重置过时版本 {} 状态失败", version.getId(), resetEx);
             }
-        });
+            return Response.fail("定时发布被跳过: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("定时发布版本 {} 失败", version.getId(), e);
+
+            // 在独立事务中恢复
+            try {
+                transactionTemplate.execute(recoveryStatus -> {
+                    if (version.getArticleId() != 0L) {
+                        rollbackToPreviousVersion(version.getArticleId(), version.getId());
+                    }
+                    articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+                    return null;
+                });
+            } catch (Exception recoveryEx) {
+                log.error("版本 {} 定时发布失败后恢复也失败", version.getId(), recoveryEx);
+            }
+
+            return Response.fail("定时发布失败: " + e.getMessage());
+        }
     }
 
     /**
      * 执行发布：物化版本到 live 表
+     * 发布失败时在独立事务中恢复到上一个已发布版本
      */
     Response executePublish(ArticleVersionDO version) {
-        return transactionTemplate.execute(status -> {
-            try {
+        try {
+            return transactionTemplate.execute(status -> {
                 Long articleId;
                 if (version.getArticleId() == 0L) {
                     // 首次发布：创建文章
@@ -416,21 +449,30 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                 version.setPublishedAt(new Date());
                 articleVersionDao.updateById(version);
 
+                // 取消该文章的其他待发布任务
+                articleVersionDao.invalidatePendingPublishByArticleId(
+                        articleId, version.getId());
+
                 return Response.success();
-            } catch (Exception e) {
-                log.error("发布版本 {} 失败，执行回滚", version.getId(), e);
-                status.setRollbackOnly();
+            });
+        } catch (Exception e) {
+            log.error("发布版本 {} 失败，执行回滚", version.getId(), e);
 
-                // 尝试回滚到上一个已发布版本
-                if (version.getArticleId() != 0L) {
-                    rollbackToPreviousVersion(version.getArticleId(), version.getId());
-                }
-
-                // 将失败版本标记为草稿供管理员修改
-                articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
-                return Response.fail("发布失败: " + e.getMessage());
+            // 在独立事务中恢复到上一个已发布版本
+            try {
+                transactionTemplate.execute(recoveryStatus -> {
+                    if (version.getArticleId() != 0L) {
+                        rollbackToPreviousVersion(version.getArticleId(), version.getId());
+                    }
+                    articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+                    return null;
+                });
+            } catch (Exception recoveryEx) {
+                log.error("版本 {} 发布失败后恢复也失败: {}", version.getId(), recoveryEx.getMessage(), recoveryEx);
             }
-        });
+
+            return Response.fail("发布失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -442,6 +484,7 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                 .title(version.getTitle())
                 .titleImage(version.getTitleImage())
                 .description(version.getDescription())
+                .currentVersionId(version.getId())
                 .build();
         articleDao.insertArticle(articleDO);
         Long articleId = articleDO.getId();
@@ -474,17 +517,25 @@ public class AdminArticleServiceImpl implements AdminArticleService {
 
     /**
      * 物化版本更新到 live 表（已有文章更新，保留 read_num）
+     * 使用版本 CAS 防止旧版本覆盖新版本
      */
     private void materializeUpdateToLiveTables(ArticleVersionDO version, Long articleId) {
-        // 更新 t_article（不覆盖 read_num）
+        // CAS 更新 t_article（不覆盖 read_num，防止旧版本覆盖新版本）
         ArticleDO articleDO = ArticleDO.builder()
                 .id(articleId)
                 .title(version.getTitle())
                 .titleImage(version.getTitleImage())
                 .description(version.getDescription())
                 .updateTime(new Date())
+                .currentVersionId(version.getId())
                 .build();
-        articleDao.updateById(articleDO);
+        int updated = articleDao.updateByIdWithVersionCas(articleDO, version.getId());
+        if (updated == 0) {
+            // 查询当前 live 版本 ID 用于异常信息
+            ArticleDO current = articleDao.queryByArticleId(articleId);
+            Long currentVersionId = current != null ? current.getCurrentVersionId() : null;
+            throw new StaleVersionException(articleId, version.getId(), currentVersionId);
+        }
 
         // 更新 t_article_content
         ArticleContentDO contentDO = ArticleContentDO.builder()

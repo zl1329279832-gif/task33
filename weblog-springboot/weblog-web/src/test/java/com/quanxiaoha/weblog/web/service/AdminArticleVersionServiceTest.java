@@ -227,6 +227,7 @@ class AdminArticleVersionServiceTest {
                 .content("# V1内容").categoryId(1L).tagIds("1").build();
         when(articleVersionDao.selectById(1L)).thenReturn(v1);
         when(articleVersionDao.selectMaxVersionNum(10L)).thenReturn(3);
+        when(articleDao.updateByIdWithVersionCas(any(ArticleDO.class), any())).thenReturn(1);
 
         RollbackArticleVersionReqVO req = RollbackArticleVersionReqVO.builder()
                 .articleId(10L).targetVersionId(1L).build();
@@ -234,7 +235,7 @@ class AdminArticleVersionServiceTest {
         assertTrue(response.isSuccess());
 
         ArgumentCaptor<ArticleDO> articleCaptor = ArgumentCaptor.forClass(ArticleDO.class);
-        verify(articleDao).updateById(articleCaptor.capture());
+        verify(articleDao).updateByIdWithVersionCas(articleCaptor.capture(), any());
         assertEquals("V1标题", articleCaptor.getValue().getTitle());
 
         ArgumentCaptor<ArticleVersionDO> versionCaptor = ArgumentCaptor.forClass(ArticleVersionDO.class);
@@ -252,13 +253,14 @@ class AdminArticleVersionServiceTest {
                 .title("V1").content("content").categoryId(1L).tagIds("1").build();
         when(articleVersionDao.selectById(1L)).thenReturn(v1);
         when(articleVersionDao.selectMaxVersionNum(10L)).thenReturn(2);
+        when(articleDao.updateByIdWithVersionCas(any(ArticleDO.class), any())).thenReturn(1);
 
         RollbackArticleVersionReqVO req = RollbackArticleVersionReqVO.builder()
                 .articleId(10L).targetVersionId(1L).build();
         articleService.rollbackToVersion(req);
 
         ArgumentCaptor<ArticleDO> captor = ArgumentCaptor.forClass(ArticleDO.class);
-        verify(articleDao).updateById(captor.capture());
+        verify(articleDao).updateByIdWithVersionCas(captor.capture(), any());
         assertNull(captor.getValue().getReadNum());
     }
 
@@ -304,6 +306,7 @@ class AdminArticleVersionServiceTest {
                 .title("标题").titleImage("img").description("desc")
                 .content("内容").categoryId(1L).tagIds("1,2,3").build();
         when(articleVersionDao.selectById(1L)).thenReturn(version);
+        when(articleDao.updateByIdWithVersionCas(any(ArticleDO.class), any())).thenReturn(1);
 
         PublishArticleVersionReqVO req = PublishArticleVersionReqVO.builder().versionId(1L).build();
         articleService.publishVersion(req);
@@ -469,11 +472,12 @@ class AdminArticleVersionServiceTest {
                 .status(ArticleVersionStatusEnum.PUBLISHED.getCode())
                 .title("定时发布标题").titleImage("img").description("desc")
                 .content("# 内容").categoryId(1L).tagIds("1").build();
+        when(articleDao.updateByIdWithVersionCas(any(ArticleDO.class), any())).thenReturn(1);
 
         Response response = articleService.publishScheduledVersion(pending);
         assertTrue(response.isSuccess());
 
-        verify(articleDao).updateById(any());
+        verify(articleDao).updateByIdWithVersionCas(any(), any());
         verify(articleContentDao).updateByArticleId(any());
         verify(articleCategoryRelDao).deleteByArticleId(10L);
         verify(articleCategoryRelDao).insert(any());

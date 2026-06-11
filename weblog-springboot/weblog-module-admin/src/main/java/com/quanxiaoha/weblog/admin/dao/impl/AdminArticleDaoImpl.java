@@ -79,4 +79,30 @@ public class AdminArticleDaoImpl implements AdminArticleDao {
         wrapper.lambda().setSql("read_num = read_num + 1").eq(ArticleDO::getId, articleId);
         return articleMapper.update(null, wrapper);
     }
+
+    @Override
+    public int updateByIdWithVersionCas(ArticleDO articleDO, Long expectedCurrentVersionId) {
+        UpdateWrapper<ArticleDO> wrapper = new UpdateWrapper<>();
+        wrapper.eq("id", articleDO.getId())
+                .and(w -> w.isNull("current_version_id")
+                        .or().le("current_version_id", expectedCurrentVersionId));
+
+        if (articleDO.getTitle() != null) {
+            wrapper.set("title", articleDO.getTitle());
+        }
+        if (articleDO.getTitleImage() != null) {
+            wrapper.set("title_image", articleDO.getTitleImage());
+        }
+        if (articleDO.getDescription() != null) {
+            wrapper.set("description", articleDO.getDescription());
+        }
+        if (articleDO.getUpdateTime() != null) {
+            wrapper.set("update_time", articleDO.getUpdateTime());
+        }
+        if (articleDO.getCurrentVersionId() != null) {
+            wrapper.set("current_version_id", articleDO.getCurrentVersionId());
+        }
+
+        return articleMapper.update(null, wrapper);
+    }
 }

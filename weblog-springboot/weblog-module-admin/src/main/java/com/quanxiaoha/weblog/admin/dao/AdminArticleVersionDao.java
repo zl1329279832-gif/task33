@@ -45,4 +45,7 @@ public interface AdminArticleVersionDao {
 
     /** 删除文章时级联软删所有版本 */
     int softDeleteByArticleId(Long articleId);
+
+    /** 将某篇文章所有 PENDING_PUBLISH 版本（排除指定版本）失效为 DRAFT */
+    int invalidatePendingPublishByArticleId(Long articleId, Long excludeVersionId);
 }

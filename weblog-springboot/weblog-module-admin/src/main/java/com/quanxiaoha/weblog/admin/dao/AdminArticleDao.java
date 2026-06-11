@@ -23,4 +23,7 @@ public interface AdminArticleDao {
     List<ArticleCountDO> selectArticleCount(String startDate, String endDate);
 
     int readNumIncrease(Long articleId);
+
+    /** CAS 更新文章：仅当 current_version_id IS NULL 或 <= expectedCurrentVersionId 时才更新 */
+    int updateByIdWithVersionCas(ArticleDO articleDO, Long expectedCurrentVersionId);
 }
