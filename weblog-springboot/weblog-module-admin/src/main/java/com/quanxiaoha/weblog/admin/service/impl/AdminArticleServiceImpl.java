@@ -325,6 +325,12 @@ public class AdminArticleServiceImpl implements AdminArticleService {
             // 物化目标版本到 live 表
             materializeUpdateToLiveTables(target, req.getArticleId());
 
+            // 取消该文章所有待发布的定时任务，防止被调度器覆盖回滚结果
+            int cancelled = articleVersionDao.cancelPendingPublishByArticleId(req.getArticleId());
+            if (cancelled > 0) {
+                log.info("文章 {} 回滚时取消了 {} 个待发布版本", req.getArticleId(), cancelled);
+            }
+
             // 创建新版本记录保留审计轨迹
             Integer maxVersion = articleVersionDao.selectMaxVersionNum(req.getArticleId());
             ArticleVersionDO rollbackVersion = ArticleVersionDO.builder()
@@ -364,11 +370,12 @@ public class AdminArticleServiceImpl implements AdminArticleService {
     // ==================== 核心私有方法 ====================
 
     /**
-     * 定时发布调度器调用：状态已由 CAS 更新为 PUBLISHED，只需物化到 live 表
+     * 定时发布调度器调用：状态已由 CAS 更新为 PUBLISHED，只需物化到 live 表。
+     * 事务失败时回退到独立事务做恢复，避免 setRollbackOnly 导致恢复操作一起回滚。
      */
     public Response publishScheduledVersion(ArticleVersionDO version) {
-        return transactionTemplate.execute(status -> {
-            try {
+        try {
+            Boolean success = transactionTemplate.execute(status -> {
                 Long articleId;
                 if (version.getArticleId() == 0L) {
                     articleId = materializeVersion(version);
@@ -380,28 +387,24 @@ public class AdminArticleServiceImpl implements AdminArticleService {
 
                 version.setPublishedAt(new Date());
                 articleVersionDao.updateById(version);
-
-                return Response.success();
-            } catch (Exception e) {
-                log.error("定时发布版本 {} 失败", version.getId(), e);
-                status.setRollbackOnly();
-
-                if (version.getArticleId() != 0L) {
-                    rollbackToPreviousVersion(version.getArticleId(), version.getId());
-                }
-
-                articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
-                return Response.fail("定时发布失败: " + e.getMessage());
-            }
-        });
+                return true;
+            });
+            return Boolean.TRUE.equals(success) ? Response.success() : Response.fail("定时发布失败");
+        } catch (Exception e) {
+            log.error("定时发布版本 {} 失败", version.getId(), e);
+            // 事务已回滚，在独立操作中执行恢复
+            handlePublishFailure(version);
+            return Response.fail("定时发布失败: " + e.getMessage());
+        }
     }
 
     /**
-     * 执行发布：物化版本到 live 表
+     * 执行发布：物化版本到 live 表。
+     * 事务失败时回退到独立操作中执行恢复。
      */
     Response executePublish(ArticleVersionDO version) {
-        return transactionTemplate.execute(status -> {
-            try {
+        try {
+            Boolean success = transactionTemplate.execute(status -> {
                 Long articleId;
                 if (version.getArticleId() == 0L) {
                     // 首次发布：创建文章
@@ -415,22 +418,15 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                 version.setStatus(ArticleVersionStatusEnum.PUBLISHED.getCode());
                 version.setPublishedAt(new Date());
                 articleVersionDao.updateById(version);
-
-                return Response.success();
-            } catch (Exception e) {
-                log.error("发布版本 {} 失败，执行回滚", version.getId(), e);
-                status.setRollbackOnly();
-
-                // 尝试回滚到上一个已发布版本
-                if (version.getArticleId() != 0L) {
-                    rollbackToPreviousVersion(version.getArticleId(), version.getId());
-                }
-
-                // 将失败版本标记为草稿供管理员修改
-                articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
-                return Response.fail("发布失败: " + e.getMessage());
-            }
-        });
+                return true;
+            });
+            return Boolean.TRUE.equals(success) ? Response.success() : Response.fail("发布失败");
+        } catch (Exception e) {
+            log.error("发布版本 {} 失败，执行回滚", version.getId(), e);
+            // 事务已回滚，在独立操作中执行恢复
+            handlePublishFailure(version);
+            return Response.fail("发布失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -493,19 +489,61 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                 .build();
         articleContentDao.updateByArticleId(contentDO);
 
-        // 替换 t_article_category_rel
-        articleCategoryRelDao.deleteByArticleId(articleId);
-        articleCategoryRelDao.insert(ArticleCategoryRelDO.builder()
-                .articleId(articleId).categoryId(version.getCategoryId()).build());
+        // 原子切换分类和标签关系
+        atomicUpdateRelations(articleId, version.getCategoryId(), version.getTagIds());
+    }
 
-        // 替换 t_article_tag_rel
-        articleTagRelDao.deleteByArticleId(articleId);
-        List<Long> tagIds = parseTagIds(version.getTagIds());
-        if (!tagIds.isEmpty()) {
-            List<ArticleTagRelDO> tagRels = tagIds.stream()
-                    .map(tagId -> ArticleTagRelDO.builder().articleId(articleId).tagId(tagId).build())
-                    .collect(Collectors.toList());
-            articleTagRelDao.insertBatch(tagRels);
+    /**
+     * 原子切换分类和标签关系：先删后插，失败时尝试恢复旧关系以保证一致性。
+     * 调用方须在事务内，事务回滚时旧数据自动恢复；此处的恢复逻辑用于
+     * 捕获异常后在独立事务中补救的场景。
+     */
+    private void atomicUpdateRelations(Long articleId, Long categoryId, String tagIds) {
+        // 备份旧关系用于异常恢复
+        ArticleCategoryRelDO oldCatRel = articleCategoryRelDao.selectByArticleId(articleId);
+        List<ArticleTagRelDO> oldTagRels = articleTagRelDao.selectByArticleId(articleId);
+
+        try {
+            // 替换 t_article_category_rel
+            articleCategoryRelDao.deleteByArticleId(articleId);
+            articleCategoryRelDao.insert(ArticleCategoryRelDO.builder()
+                    .articleId(articleId).categoryId(categoryId).build());
+
+            // 替换 t_article_tag_rel
+            articleTagRelDao.deleteByArticleId(articleId);
+            List<Long> tagIdList = parseTagIds(tagIds);
+            if (!tagIdList.isEmpty()) {
+                List<ArticleTagRelDO> tagRels = tagIdList.stream()
+                        .map(tagId -> ArticleTagRelDO.builder().articleId(articleId).tagId(tagId).build())
+                        .collect(Collectors.toList());
+                articleTagRelDao.insertBatch(tagRels);
+            }
+        } catch (Exception e) {
+            log.error("文章 {} 标签/分类关系切换失败，尝试恢复旧关系", articleId, e);
+            // 在事务回滚之前尝试恢复——如果外层事务最终回滚，这些操作也会一起回滚，
+            // 但旧数据本来就在事务开始时的快照中，所以不影响正确性。
+            tryRestoreRelations(articleId, oldCatRel, oldTagRels);
+            throw e;
+        }
+    }
+
+    /**
+     * 尝试恢复分类和标签关系到备份状态
+     */
+    private void tryRestoreRelations(Long articleId, ArticleCategoryRelDO oldCatRel, List<ArticleTagRelDO> oldTagRels) {
+        try {
+            articleCategoryRelDao.deleteByArticleId(articleId);
+            if (oldCatRel != null) {
+                articleCategoryRelDao.insert(oldCatRel);
+            }
+
+            articleTagRelDao.deleteByArticleId(articleId);
+            if (oldTagRels != null && !oldTagRels.isEmpty()) {
+                articleTagRelDao.insertBatch(oldTagRels);
+            }
+            log.info("文章 {} 标签/分类关系已恢复", articleId);
+        } catch (Exception restoreEx) {
+            log.error("文章 {} 关系恢复也失败了: {}", articleId, restoreEx.getMessage(), restoreEx);
         }
     }
 
@@ -524,6 +562,48 @@ public class AdminArticleServiceImpl implements AdminArticleService {
             }
         } catch (Exception rollbackEx) {
             log.error("文章 {} 回滚也失败了: {}", articleId, rollbackEx.getMessage(), rollbackEx);
+        }
+    }
+
+    /**
+     * 检查版本是否已过期（被更新的已发布版本取代）。
+     * 调度器在 CAS 之后、物化之前调用，避免把已被回滚覆盖的旧版本重新物化到线上。
+     */
+    public boolean isVersionStale(ArticleVersionDO version) {
+        if (version.getArticleId() == null || version.getArticleId() == 0L) {
+            // 新文章首次发布，不存在过期问题
+            return false;
+        }
+        ArticleVersionDO latestPublished = articleVersionDao.selectLatestPublishedByArticleId(version.getArticleId());
+        if (latestPublished != null && latestPublished.getVersionNum() > version.getVersionNum()) {
+            log.info("版本 {} (v{}) 已过期，最新已发布版本为 v{}",
+                    version.getId(), version.getVersionNum(), latestPublished.getVersionNum());
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 发布失败后的恢复处理：尝试回滚到上一个已发布版本，并将失败版本标记为草稿。
+     * 此方法在失败事务已回滚之后调用，所有操作在独立事务中执行。
+     */
+    public void handlePublishFailure(ArticleVersionDO version) {
+        try {
+            // 尝试回滚到上一个已发布版本（恢复线上内容）
+            if (version.getArticleId() != null && version.getArticleId() != 0L) {
+                rollbackToPreviousVersion(version.getArticleId(), version.getId());
+            }
+            // 将失败版本标记为草稿供管理员修改
+            articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+            log.info("版本 {} 已标记为草稿", version.getId());
+        } catch (Exception recoveryEx) {
+            log.error("版本 {} 发布失败后的恢复操作也失败了: {}", version.getId(), recoveryEx.getMessage(), recoveryEx);
+            // 最后兜底：无论如何尝试标记为草稿
+            try {
+                articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+            } catch (Exception finalEx) {
+                log.error("版本 {} 最终兜底标记草稿也失败", version.getId(), finalEx);
+            }
         }
     }
 

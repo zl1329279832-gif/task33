@@ -70,6 +70,8 @@ class ArticlePublishSchedulerTest {
                 eq(ArticleVersionStatusEnum.PENDING_PUBLISH.getCode()),
                 eq(ArticleVersionStatusEnum.PUBLISHED.getCode())))
                 .thenReturn(1);
+        // 版本未过期
+        when(articleService.isVersionStale(any())).thenReturn(false);
         when(articleService.publishScheduledVersion(any())).thenReturn(Response.success());
 
         scheduler.processPendingPublish();
@@ -77,6 +79,7 @@ class ArticlePublishSchedulerTest {
         verify(articleVersionDao).updateStatusWithCas(eq(1L),
                 eq(ArticleVersionStatusEnum.PENDING_PUBLISH.getCode()),
                 eq(ArticleVersionStatusEnum.PUBLISHED.getCode()));
+        verify(articleService).isVersionStale(pending);
         verify(articleService).publishScheduledVersion(pending);
     }
 
@@ -101,7 +104,7 @@ class ArticlePublishSchedulerTest {
     }
 
     @Test
-    @DisplayName("发布失败时标记为草稿")
+    @DisplayName("发布失败时调用 handlePublishFailure 恢复")
     void processPendingPublish_MarksAsDraftOnFailure() {
         ArticleVersionDO pending = ArticleVersionDO.builder()
                 .id(1L)
@@ -113,12 +116,15 @@ class ArticlePublishSchedulerTest {
                 .thenReturn(Arrays.asList(pending));
         when(articleVersionDao.updateStatusWithCas(any(), anyInt(), anyInt()))
                 .thenReturn(1);
+        // 版本未过期
+        when(articleService.isVersionStale(any())).thenReturn(false);
         when(articleService.publishScheduledVersion(any()))
                 .thenThrow(new RuntimeException("数据库错误"));
 
         scheduler.processPendingPublish();
 
-        verify(articleVersionDao).updateStatus(1L, ArticleVersionStatusEnum.DRAFT.getCode());
+        // 调度器现在调用集中式恢复方法，而不是直接标记草稿
+        verify(articleService).handlePublishFailure(pending);
     }
 
     @Test

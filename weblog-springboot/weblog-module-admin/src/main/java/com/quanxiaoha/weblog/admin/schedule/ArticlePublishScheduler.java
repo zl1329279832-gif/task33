@@ -52,14 +52,21 @@ public class ArticlePublishScheduler {
                     continue;
                 }
 
+                // 过期检查：如果已有更新的已发布版本（如回滚产生），放弃此版本
+                if (articleService.isVersionStale(version)) {
+                    log.info("版本 {} 已过期（存在更新的已发布版本），标记为草稿", version.getId());
+                    articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+                    continue;
+                }
+
                 // 物化到 live 表（状态已在 CAS 中更新）
                 articleService.publishScheduledVersion(version);
 
                 log.info("版本 {} 定时发布成功", version.getId());
             } catch (Exception e) {
                 log.error("版本 {} 定时发布失败: {}", version.getId(), e.getMessage(), e);
-                // 标记为草稿供管理员重试
-                articleVersionDao.updateStatus(version.getId(), ArticleVersionStatusEnum.DRAFT.getCode());
+                // 使用集中式恢复逻辑：回滚线上 + 标记草稿
+                articleService.handlePublishFailure(version);
             }
         }
     }
