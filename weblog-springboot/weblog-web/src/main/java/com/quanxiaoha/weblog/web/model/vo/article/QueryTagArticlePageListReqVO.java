@@ -18,4 +18,5 @@ public class QueryTagArticlePageListReqVO {
 
     @NotNull(message = "所属标签 ID 不能为空")
     private Long tagId;
+    private String previewToken;
 }

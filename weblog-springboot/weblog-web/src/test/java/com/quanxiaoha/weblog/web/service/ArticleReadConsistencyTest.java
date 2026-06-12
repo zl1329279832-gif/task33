@@ -41,6 +41,9 @@ class ArticleReadConsistencyTest {
     @Mock private ArticleTagRelDao articleTagRelDao;
     @Mock private EventBus eventBus;
     @Mock private ArticleConvert articleConvert;
+    @Mock private GrayResolutionService grayResolutionService;
+    @Mock private ArticleVersionDao articleVersionDao;
+    @Mock private UserDao userDao;
 
     @BeforeEach
     void setUp() {
@@ -53,6 +56,12 @@ class ArticleReadConsistencyTest {
         ReflectionTestUtils.setField(articleService, "articleTagRelDao", articleTagRelDao);
         ReflectionTestUtils.setField(articleService, "eventBus", eventBus);
         ReflectionTestUtils.setField(articleService, "articleConvert", articleConvert);
+        ReflectionTestUtils.setField(articleService, "grayResolutionService", grayResolutionService);
+        ReflectionTestUtils.setField(articleService, "articleVersionDao", articleVersionDao);
+        ReflectionTestUtils.setField(articleService, "userDao", userDao);
+
+        // 默认灰度未命中
+        lenient().when(grayResolutionService.resolve(anyLong(), any())).thenReturn(GrayResolutionResult.miss());
     }
 
     @Test

@@ -12,7 +12,8 @@ public enum ArticleVersionStatusEnum {
 
     DRAFT(0, "草稿"),
     PENDING_PUBLISH(1, "待发布"),
-    PUBLISHED(2, "已发布");
+    PUBLISHED(2, "已发布"),
+    GRAY(3, "灰度发布");
 
     private final int code;
     private final String description;

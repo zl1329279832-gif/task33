@@ -13,4 +13,5 @@ import lombok.NoArgsConstructor;
 public class QueryArchivePageListReqVO {
     private Long current = 1L;
     private Long size = 10L;
+    private String previewToken;
 }

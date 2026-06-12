@@ -17,4 +17,5 @@ import lombok.NoArgsConstructor;
 @Builder
 public class QueryArticleDetailReqVO {
     private Long articleId;
+    private String previewToken;
 }

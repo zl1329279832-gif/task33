@@ -110,3 +110,67 @@ CREATE TABLE IF NOT EXISTS t_user_role
     role        varchar(60) NOT NULL,
     create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS t_user_tag
+(
+    id          bigint AUTO_INCREMENT PRIMARY KEY,
+    user_id     bigint NOT NULL,
+    tag_label   varchar(100) NOT NULL,
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uni_user_tag ON t_user_tag(user_id, tag_label);
+
+CREATE TABLE IF NOT EXISTS t_gray_rule
+(
+    id          bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id  bigint NOT NULL,
+    rule_type   varchar(20) NOT NULL,
+    rule_value  varchar(500) NOT NULL,
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS t_preview_token
+(
+    id          bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id  bigint NOT NULL,
+    token       varchar(64) NOT NULL,
+    expire_at   datetime NOT NULL,
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_used     tinyint NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uni_token ON t_preview_token(token);
+
+CREATE TABLE IF NOT EXISTS t_publish_batch
+(
+    id           bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id   bigint NOT NULL,
+    batch_num    int NOT NULL DEFAULT 1,
+    batch_type   varchar(10) NOT NULL,
+    status       varchar(20) NOT NULL,
+    created_by   varchar(60) NOT NULL DEFAULT '',
+    create_time  datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at datetime DEFAULT NULL
+);
+
+CREATE TABLE IF NOT EXISTS t_version_exposure_log
+(
+    id           bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id   bigint NOT NULL,
+    batch_id     bigint DEFAULT NULL,
+    article_id   bigint NOT NULL,
+    user_id      bigint DEFAULT NULL,
+    matched_rule varchar(100) DEFAULT NULL,
+    exposed_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS t_rollback_audit
+(
+    id              bigint AUTO_INCREMENT PRIMARY KEY,
+    article_id      bigint NOT NULL,
+    from_version_id bigint NOT NULL,
+    to_version_id   bigint NOT NULL,
+    batch_id        bigint DEFAULT NULL,
+    operator        varchar(60) NOT NULL DEFAULT '',
+    reason          varchar(500) DEFAULT NULL,
+    rollback_time   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

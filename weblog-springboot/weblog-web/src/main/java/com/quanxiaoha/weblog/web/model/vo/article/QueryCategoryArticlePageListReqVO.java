@@ -18,4 +18,5 @@ public class QueryCategoryArticlePageListReqVO {
     // 分类
     @NotNull(message = "分类 ID 不能为空")
     private Long categoryId;
+    private String previewToken;
 }

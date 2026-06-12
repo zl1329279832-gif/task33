@@ -48,4 +48,16 @@ public interface AdminArticleVersionDao {
 
     /** 取消某篇文章所有待发布版本（回滚时调用）：PENDING_PUBLISH → DRAFT */
     int cancelPendingPublishByArticleId(Long articleId);
+
+    /** 查询某篇文章的活跃灰度版本 */
+    ArticleVersionDO selectActiveGrayByArticleId(Long articleId);
+
+    /** 取消某篇文章的灰度版本：GRAY → DRAFT */
+    int cancelGrayByArticleId(Long articleId);
+
+    /** 某篇文章是否有活跃的灰度版本 */
+    boolean hasActiveGrayForArticle(Long articleId);
+
+    /** 查询某篇文章是否有待发布版本 */
+    boolean hasPendingPublishForArticle(Long articleId);
 }

@@ -10,12 +10,20 @@ import com.quanxiaoha.weblog.common.domain.dos.*;
 import com.quanxiaoha.weblog.common.domain.mapper.ArticleMapper;
 import com.quanxiaoha.weblog.web.convert.ArticleConvert;
 import com.quanxiaoha.weblog.web.dao.ArticleDao;
+import com.quanxiaoha.weblog.web.dao.ArticleVersionDao;
+import com.quanxiaoha.weblog.web.dao.UserDao;
 import com.quanxiaoha.weblog.web.model.vo.archive.QueryArchiveItemRspVO;
 import com.quanxiaoha.weblog.web.model.vo.archive.QueryArchivePageListReqVO;
 import com.quanxiaoha.weblog.web.model.vo.archive.QueryArchivePageListRspVO;
 import com.quanxiaoha.weblog.web.service.ArchiveService;
+import com.quanxiaoha.weblog.web.service.GrayResolutionContext;
+import com.quanxiaoha.weblog.web.service.GrayResolutionResult;
+import com.quanxiaoha.weblog.web.service.GrayResolutionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
@@ -37,6 +45,10 @@ public class ArchiveServiceImpl extends ServiceImpl<ArticleMapper, ArticleDO> im
     private ArticleDao articleDao;
     @Autowired
     private ArticleConvert articleConvert;
+    @Autowired
+    private GrayResolutionService grayResolutionService;
+    @Autowired
+    private UserDao userDao;
 
     @Override
     public Response queryArchive(QueryArchivePageListReqVO queryArchivePageListReqVO) {
@@ -53,6 +65,18 @@ public class ArchiveServiceImpl extends ServiceImpl<ArticleMapper, ArticleDO> im
                     .map(articleDO -> articleConvert.convert2Archive(articleDO))
                     .collect(Collectors.toList());
 
+            // 灰度覆盖
+            GrayResolutionContext grayCtx = buildGrayContext(queryArchivePageListReqVO.getPreviewToken());
+            for (QueryArchiveItemRspVO item : itemRspVOList) {
+                GrayResolutionResult result = grayResolutionService.resolve(item.getId(), grayCtx);
+                if (result.isGrayHit()) {
+                    ArticleVersionDO grayVersion = result.getGrayVersion();
+                    item.setTitle(grayVersion.getTitle());
+                    item.setTitleImage(grayVersion.getTitleImage());
+                    grayResolutionService.logExposure(result, item.getId(), grayCtx.getUserId());
+                }
+            }
+
             Map<String, List<QueryArchiveItemRspVO>> map = itemRspVOList.stream().collect(Collectors.groupingBy(QueryArchiveItemRspVO::getCreateMonth));
             Map<String, List<QueryArchiveItemRspVO>> sortedMap = new TreeMap<>(new MonthKeyComparator());
             sortedMap.putAll(map);
@@ -60,6 +84,21 @@ public class ArchiveServiceImpl extends ServiceImpl<ArticleMapper, ArticleDO> im
             sortedMap.forEach((k, v) -> list.add(QueryArchivePageListRspVO.builder().month(k).articles(v).build()));
         }
         return PageResponse.success(articleDOIPage, list);
+    }
+
+    private GrayResolutionContext buildGrayContext(String previewToken) {
+        Long userId = null;
+        String username = null;
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof UserDetails) {
+            username = ((UserDetails) auth.getPrincipal()).getUsername();
+            userId = userDao.selectUserIdByUsername(username);
+        }
+        return GrayResolutionContext.builder()
+                .userId(userId)
+                .username(username)
+                .previewToken(previewToken)
+                .build();
     }
 
     class MonthKeyComparator implements Comparator<String> {

@@ -15,9 +15,15 @@ import com.quanxiaoha.weblog.web.model.vo.article.*;
 import com.quanxiaoha.weblog.web.model.vo.category.QueryCategoryListItemRspVO;
 import com.quanxiaoha.weblog.web.model.vo.tag.QueryTagListItemRspVO;
 import com.quanxiaoha.weblog.web.service.ArticleService;
+import com.quanxiaoha.weblog.web.service.GrayResolutionContext;
+import com.quanxiaoha.weblog.web.service.GrayResolutionResult;
+import com.quanxiaoha.weblog.web.service.GrayResolutionService;
 import com.quanxiaoha.weblog.web.utils.MarkdownUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
@@ -25,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Arrays;
 import java.util.stream.Collectors;
 
 /**
@@ -53,6 +60,12 @@ public class ArticleServiceImpl implements ArticleService {
     private EventBus eventBus;
     @Autowired
     private ArticleConvert articleConvert;
+    @Autowired
+    private GrayResolutionService grayResolutionService;
+    @Autowired
+    private ArticleVersionDao articleVersionDao;
+    @Autowired
+    private UserDao userDao;
 
     @Override
     public PageResponse queryIndexArticlePageList(QueryIndexArticlePageListReqVO queryIndexArticlePageListReqVO) {
@@ -116,6 +129,9 @@ public class ArticleServiceImpl implements ArticleService {
                 p.setTags(queryTagListItemRspVOS);
                 return p;
             }).collect(Collectors.toList());
+
+            // 灰度覆盖
+            applyGrayOverlay(list, buildGrayContext(queryIndexArticlePageListReqVO.getPreviewToken()));
         }
         return PageResponse.success(articleDOIPage, list);
     }
@@ -192,6 +208,9 @@ public class ArticleServiceImpl implements ArticleService {
                 p.setTags(queryTagListItemRspVOS);
                 return p;
             }).collect(Collectors.toList());
+
+            // 灰度覆盖
+            applyGrayOverlay(list, buildGrayContext(queryCategoryArticlePageListReqVO.getPreviewToken()));
         }
         return PageResponse.success(articleDOIPage, list);
     }
@@ -199,6 +218,17 @@ public class ArticleServiceImpl implements ArticleService {
     @Override
     public Response queryArticleDetail(QueryArticleDetailReqVO queryArticleDetailReqVO) {
         Long articleId = queryArticleDetailReqVO.getArticleId();
+
+        // 灰度解析：检查是否命中灰度版本
+        GrayResolutionContext grayCtx = buildGrayContext(queryArticleDetailReqVO.getPreviewToken());
+        GrayResolutionResult grayResult = grayResolutionService.resolve(articleId, grayCtx);
+        if (grayResult.isGrayHit()) {
+            grayResolutionService.logExposure(grayResult, articleId, grayCtx.getUserId());
+            // 仍然触发 PV 事件
+            log.info("发送 PV +1 消息事件（灰度）");
+            eventBus.post(ArticleEvent.builder().articleId(articleId).message(EventEnum.PV_INCREASE.getMessage()).build());
+            return Response.success(buildDetailFromGrayVersion(grayResult.getGrayVersion(), articleId));
+        }
 
         // 判断文章是否存在
         ArticleDO articleDO = articleDao.selectArticleById(articleId);
@@ -330,7 +360,116 @@ public class ArticleServiceImpl implements ArticleService {
                 p.setTags(queryTagListItemRspVOS);
                 return p;
             }).collect(Collectors.toList());
+
+            // 灰度覆盖
+            applyGrayOverlay(list, buildGrayContext(queryTagArticlePageListReqVO.getPreviewToken()));
         }
         return PageResponse.success(articleDOIPage, list);
+    }
+
+    // ==================== 灰度辅助方法 ====================
+
+    private GrayResolutionContext buildGrayContext(String previewToken) {
+        Long userId = null;
+        String username = null;
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof UserDetails) {
+            username = ((UserDetails) auth.getPrincipal()).getUsername();
+            userId = userDao.selectUserIdByUsername(username);
+        }
+        return GrayResolutionContext.builder()
+                .userId(userId)
+                .username(username)
+                .previewToken(previewToken)
+                .build();
+    }
+
+    private QueryArticleDetailRspVO buildDetailFromGrayVersion(ArticleVersionDO version, Long articleId) {
+        QueryArticleDetailRspVO vo = QueryArticleDetailRspVO.builder()
+                .title(version.getTitle())
+                .updateTime(version.getCreateTime())
+                .content(MarkdownUtil.parse2Html(version.getContent()))
+                .readNum(0L)
+                .build();
+
+        // 解析分类快照
+        Long grayCategoryId = version.getCategoryId();
+        if (grayCategoryId != null && grayCategoryId != 0L) {
+            CategoryDO categoryDO = categoryDao.selectByCategoryId(grayCategoryId);
+            if (categoryDO != null) {
+                vo.setCategoryId(categoryDO.getId());
+                vo.setCategoryName(categoryDO.getName());
+            }
+        }
+
+        // 解析标签快照
+        String tagSnapshot = version.getTagIds();
+        if (tagSnapshot != null && !tagSnapshot.isEmpty()) {
+            List<Long> tagIds = Arrays.stream(tagSnapshot.split(","))
+                    .map(Long::parseLong)
+                    .collect(Collectors.toList());
+            List<TagDO> tagDOS = tagDao.selectByTagIds(tagIds);
+            List<QueryTagListItemRspVO> tagVOS = tagDOS.stream()
+                    .map(t -> QueryTagListItemRspVO.builder().id(t.getId()).name(t.getName()).build())
+                    .collect(Collectors.toList());
+            vo.setTags(tagVOS);
+        }
+
+        // 上一篇 / 下一篇
+        ArticleDO preArticle = articleDao.selectPreArticle(articleId);
+        if (Objects.nonNull(preArticle)) {
+            vo.setPreArticle(QueryArticleLinkRspVO.builder().title(preArticle.getTitle()).id(preArticle.getId()).build());
+        }
+        ArticleDO nextArticle = articleDao.selectNextArticle(articleId);
+        if (Objects.nonNull(nextArticle)) {
+            vo.setNextArticle(QueryArticleLinkRspVO.builder().title(nextArticle.getTitle()).id(nextArticle.getId()).build());
+        }
+
+        // 读取当前文章的阅读量
+        ArticleDO articleDO = articleDao.selectArticleById(articleId);
+        if (articleDO != null) {
+            vo.setReadNum(articleDO.getReadNum());
+        }
+
+        return vo;
+    }
+
+    private void applyGrayOverlay(List<QueryIndexArticlePageItemRspVO> items, GrayResolutionContext ctx) {
+        if (CollectionUtils.isEmpty(items)) {
+            return;
+        }
+        for (QueryIndexArticlePageItemRspVO item : items) {
+            GrayResolutionResult result = grayResolutionService.resolve(item.getId(), ctx);
+            if (result.isGrayHit()) {
+                ArticleVersionDO grayVersion = result.getGrayVersion();
+                item.setTitle(grayVersion.getTitle());
+                item.setTitleImage(grayVersion.getTitleImage());
+
+                // 覆盖分类
+                Long grayCategoryId = grayVersion.getCategoryId();
+                if (grayCategoryId != null && grayCategoryId != 0L) {
+                    CategoryDO categoryDO = categoryDao.selectByCategoryId(grayCategoryId);
+                    if (categoryDO != null) {
+                        item.setCategory(QueryCategoryListItemRspVO.builder()
+                                .id(categoryDO.getId()).name(categoryDO.getName()).build());
+                    }
+                }
+
+                // 覆盖标签
+                String tagSnapshot = grayVersion.getTagIds();
+                if (tagSnapshot != null && !tagSnapshot.isEmpty()) {
+                    List<Long> tagIds = Arrays.stream(tagSnapshot.split(","))
+                            .map(Long::parseLong)
+                            .collect(Collectors.toList());
+                    List<TagDO> tagDOS = tagDao.selectByTagIds(tagIds);
+                    List<QueryTagListItemRspVO> tagVOS = tagDOS.stream()
+                            .map(t -> QueryTagListItemRspVO.builder().id(t.getId()).name(t.getName()).build())
+                            .collect(Collectors.toList());
+                    item.setTags(tagVOS);
+                }
+
+                grayResolutionService.logExposure(result, item.getId(), ctx.getUserId());
+            }
+        }
     }
 }

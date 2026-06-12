@@ -432,7 +432,7 @@ public class AdminArticleServiceImpl implements AdminArticleService {
     /**
      * 物化新版本到 live 表（新文章首次发布）
      */
-    private Long materializeVersion(ArticleVersionDO version) {
+    Long materializeVersion(ArticleVersionDO version) {
         // 插入 t_article
         ArticleDO articleDO = ArticleDO.builder()
                 .title(version.getTitle())
@@ -471,7 +471,7 @@ public class AdminArticleServiceImpl implements AdminArticleService {
     /**
      * 物化版本更新到 live 表（已有文章更新，保留 read_num）
      */
-    private void materializeUpdateToLiveTables(ArticleVersionDO version, Long articleId) {
+    void materializeUpdateToLiveTables(ArticleVersionDO version, Long articleId) {
         // 更新 t_article（不覆盖 read_num）
         ArticleDO articleDO = ArticleDO.builder()
                 .id(articleId)

@@ -162,4 +162,41 @@ public class AdminArticleVersionDaoImpl implements AdminArticleVersionDao {
                 .set(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.DRAFT.getCode());
         return articleVersionMapper.update(null, wrapper);
     }
+
+    @Override
+    public ArticleVersionDO selectActiveGrayByArticleId(Long articleId) {
+        QueryWrapper<ArticleVersionDO> wrapper = new QueryWrapper<>();
+        wrapper.lambda()
+                .eq(ArticleVersionDO::getArticleId, articleId)
+                .eq(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.GRAY.getCode())
+                .eq(ArticleVersionDO::getIsDeleted, false)
+                .last("limit 1");
+        return articleVersionMapper.selectOne(wrapper);
+    }
+
+    @Override
+    public int cancelGrayByArticleId(Long articleId) {
+        UpdateWrapper<ArticleVersionDO> wrapper = new UpdateWrapper<>();
+        wrapper.lambda()
+                .eq(ArticleVersionDO::getArticleId, articleId)
+                .eq(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.GRAY.getCode())
+                .eq(ArticleVersionDO::getIsDeleted, false)
+                .set(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.DRAFT.getCode());
+        return articleVersionMapper.update(null, wrapper);
+    }
+
+    @Override
+    public boolean hasActiveGrayForArticle(Long articleId) {
+        return selectActiveGrayByArticleId(articleId) != null;
+    }
+
+    @Override
+    public boolean hasPendingPublishForArticle(Long articleId) {
+        QueryWrapper<ArticleVersionDO> wrapper = new QueryWrapper<>();
+        wrapper.lambda()
+                .eq(ArticleVersionDO::getArticleId, articleId)
+                .eq(ArticleVersionDO::getStatus, ArticleVersionStatusEnum.PENDING_PUBLISH.getCode())
+                .eq(ArticleVersionDO::getIsDeleted, false);
+        return articleVersionMapper.selectCount(wrapper) > 0;
+    }
 }

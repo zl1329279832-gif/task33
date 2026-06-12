@@ -28,6 +28,13 @@ public enum ResponseCodeEnum implements BaseExceptionInterface {
     DUPLICATE_TAG_ERROR("10008", "提交的部分标签已被创建"),
     DUPLICATE_CATEGORY_ERROR("10009", "该分类已被创建"),
     TOKEN_EXPIRED("10010", "Token 已过期"),
+
+    // ----------- 灰度发布异常状态码 -----------
+    GRAY_VERSION_NOT_FOUND("10011", "灰度版本不存在"),
+    GRAY_CONFLICT_PENDING_PUBLISH("10012", "存在待发布的定时版本，请先取消或等待完成"),
+    GRAY_CONFLICT_ACTIVE("10013", "该文章已有活跃的灰度版本"),
+    PREVIEW_TOKEN_EXPIRED("10014", "预览令牌已过期"),
+    GRAY_ALREADY_PROMOTED("10015", "灰度版本已全量发布"),
     ;
 
     private String errorCode;

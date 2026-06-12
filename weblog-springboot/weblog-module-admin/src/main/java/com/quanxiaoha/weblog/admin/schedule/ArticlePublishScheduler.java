@@ -59,6 +59,18 @@ public class ArticlePublishScheduler {
                     continue;
                 }
 
+                // 灰度冲突检查：如果该文章有活跃灰度版本，延后定时发布
+                if (version.getArticleId() != null && version.getArticleId() != 0L) {
+                    ArticleVersionDO activeGray = articleVersionDao.selectActiveGrayByArticleId(version.getArticleId());
+                    if (activeGray != null) {
+                        log.info("文章 {} 有活跃灰度版本 {}，定时版本 {} 延后",
+                                version.getArticleId(), activeGray.getId(), version.getId());
+                        articleVersionDao.updateStatus(version.getId(),
+                                ArticleVersionStatusEnum.PENDING_PUBLISH.getCode());
+                        continue;
+                    }
+                }
+
                 // 物化到 live 表（状态已在 CAS 中更新）
                 articleService.publishScheduledVersion(version);
 

@@ -2,6 +2,7 @@ package com.quanxiaoha.weblog.admin.controller;
 
 import com.quanxiaoha.weblog.admin.model.vo.article.*;
 import com.quanxiaoha.weblog.admin.service.AdminArticleService;
+import com.quanxiaoha.weblog.admin.service.AdminGrayPublishService;
 import com.quanxiaoha.weblog.common.Response;
 import com.quanxiaoha.weblog.common.aspect.ApiOperationLog;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,9 @@ public class AdminArticleController {
 
     @Autowired
     private AdminArticleService articleService;
+
+    @Autowired
+    private AdminGrayPublishService grayPublishService;
 
     @PostMapping("/publish")
     @ApiOperationLog(description = "发布文章")
@@ -104,5 +108,56 @@ public class AdminArticleController {
     @PreAuthorize("hasRole('ROLE_ADMIN')")
     public Response recoverVersion(@RequestBody @Validated RollbackArticleVersionReqVO req) {
         return articleService.recoverVersion(req.getTargetVersionId());
+    }
+
+    // ==================== 灰度发布相关接口 ====================
+
+    @PostMapping("/gray/publish")
+    @ApiOperationLog(description = "灰度发布版本")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response grayPublish(@RequestBody @Validated GrayPublishReqVO req) {
+        return grayPublishService.grayPublish(req);
+    }
+
+    @PostMapping("/gray/rules")
+    @ApiOperationLog(description = "更新灰度规则")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response updateGrayRules(@RequestBody @Validated GrayRuleUpdateReqVO req) {
+        return grayPublishService.updateGrayRules(req);
+    }
+
+    @PostMapping("/gray/token/generate")
+    @ApiOperationLog(description = "生成预览令牌")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response generatePreviewToken(@RequestBody @Validated GeneratePreviewTokenReqVO req) {
+        return grayPublishService.generatePreviewToken(req);
+    }
+
+    @PostMapping("/gray/promote")
+    @ApiOperationLog(description = "灰度全量发布")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response promoteGrayToFull(@RequestBody @Validated GrayPromoteReqVO req) {
+        return grayPublishService.promoteGrayToFull(req);
+    }
+
+    @PostMapping("/gray/rollback")
+    @ApiOperationLog(description = "灰度回滚")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response rollbackGray(@RequestBody @Validated GrayRollbackReqVO req) {
+        return grayPublishService.rollbackGray(req);
+    }
+
+    @PostMapping("/gray/stats")
+    @ApiOperationLog(description = "灰度统计")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response queryGrayStats(@RequestBody QueryVersionDetailReqVO req) {
+        return grayPublishService.queryGrayStats(req.getVersionId());
+    }
+
+    @PostMapping("/gray/batch/list")
+    @ApiOperationLog(description = "发布批次列表")
+    @PreAuthorize("hasRole('ROLE_ADMIN')")
+    public Response queryPublishBatchList(@RequestBody @Validated QueryPublishBatchListReqVO req) {
+        return grayPublishService.queryPublishBatchList(req);
     }
 }
