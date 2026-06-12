@@ -17,4 +17,7 @@ import lombok.NoArgsConstructor;
 @Builder
 public class QueryArticleDetailReqVO {
     private Long articleId;
+
+    /** 灰度预览令牌（可选，旧客户端不传默认null） */
+    private String previewToken;
 }

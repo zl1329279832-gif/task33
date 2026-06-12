@@ -15,7 +15,9 @@ import com.quanxiaoha.weblog.web.model.vo.article.*;
 import com.quanxiaoha.weblog.web.model.vo.category.QueryCategoryListItemRspVO;
 import com.quanxiaoha.weblog.web.model.vo.tag.QueryTagListItemRspVO;
 import com.quanxiaoha.weblog.web.service.ArticleService;
+import com.quanxiaoha.weblog.web.service.GrayReleaseService;
 import com.quanxiaoha.weblog.web.utils.MarkdownUtil;
+import com.quanxiaoha.weblog.web.utils.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -53,6 +55,8 @@ public class ArticleServiceImpl implements ArticleService {
     private EventBus eventBus;
     @Autowired
     private ArticleConvert articleConvert;
+    @Autowired
+    private GrayReleaseService grayReleaseService;
 
     @Override
     public PageResponse queryIndexArticlePageList(QueryIndexArticlePageListReqVO queryIndexArticlePageListReqVO) {
@@ -200,7 +204,19 @@ public class ArticleServiceImpl implements ArticleService {
     public Response queryArticleDetail(QueryArticleDetailReqVO queryArticleDetailReqVO) {
         Long articleId = queryArticleDetailReqVO.getArticleId();
 
-        // 判断文章是否存在
+        // 灰度版本路由：优先检查是否有灰度命中
+        String username = SecurityUtils.getCurrentUsername();
+        String previewToken = queryArticleDetailReqVO.getPreviewToken();
+        ArticleVersionDO grayVersion = grayReleaseService.resolveGrayVersion(articleId, username, previewToken);
+        if (grayVersion != null) {
+            QueryArticleDetailRspVO grayVo = grayReleaseService.buildGrayDetailResponse(grayVersion, articleId);
+            // 发送 PV +1 事件
+            log.info("灰度版本命中，发送 PV +1 消息事件");
+            eventBus.post(ArticleEvent.builder().articleId(articleId).message(EventEnum.PV_INCREASE.getMessage()).build());
+            return Response.success(grayVo);
+        }
+
+        // 未命中灰度：原有逻辑从线上表读取
         ArticleDO articleDO = articleDao.selectArticleById(articleId);
 
         if (Objects.isNull(articleDO)) {

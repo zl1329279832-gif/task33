@@ -41,6 +41,7 @@ class ArticleReadConsistencyTest {
     @Mock private ArticleTagRelDao articleTagRelDao;
     @Mock private EventBus eventBus;
     @Mock private ArticleConvert articleConvert;
+    @Mock private GrayReleaseService grayReleaseService;
 
     @BeforeEach
     void setUp() {
@@ -53,6 +54,7 @@ class ArticleReadConsistencyTest {
         ReflectionTestUtils.setField(articleService, "articleTagRelDao", articleTagRelDao);
         ReflectionTestUtils.setField(articleService, "eventBus", eventBus);
         ReflectionTestUtils.setField(articleService, "articleConvert", articleConvert);
+        ReflectionTestUtils.setField(articleService, "grayReleaseService", grayReleaseService);
     }
 
     @Test

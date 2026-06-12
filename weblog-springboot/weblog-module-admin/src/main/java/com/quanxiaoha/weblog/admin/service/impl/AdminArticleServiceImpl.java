@@ -43,6 +43,8 @@ public class AdminArticleServiceImpl implements AdminArticleService {
     private AdminArticleVersionDao articleVersionDao;
     @Autowired
     private AdminCategoryDao categoryDao;
+    @Autowired
+    private AdminGrayReleaseDao adminGrayReleaseDao;
 
     // 手动事务
     private final TransactionTemplate transactionTemplate;
@@ -214,6 +216,13 @@ public class AdminArticleServiceImpl implements AdminArticleService {
 
         // 定时发布：标记为 PENDING_PUBLISH
         if (req.getScheduledAt() != null && req.getScheduledAt().after(new Date())) {
+            // 灰度冲突检查：有灰度版本时不允许定时发布
+            if (version.getArticleId() != null && version.getArticleId() > 0) {
+                ArticleVersionDO activeGray = adminGrayReleaseDao.selectActiveGrayByArticleId(version.getArticleId());
+                if (activeGray != null) {
+                    return Response.fail("该文章存在活跃的灰度版本，请先完成全量发布或回滚灰度版本后再进行定时发布");
+                }
+            }
             version.setStatus(ArticleVersionStatusEnum.PENDING_PUBLISH.getCode());
             version.setScheduledAt(req.getScheduledAt());
             articleVersionDao.updateById(version);
@@ -365,6 +374,22 @@ public class AdminArticleServiceImpl implements AdminArticleService {
                 .targetVersionId(versionId)
                 .build();
         return rollbackToVersion(req);
+    }
+
+    // ==================== 灰度发布物化代理方法 ====================
+
+    /**
+     * 灰度全量发布时调用：物化新版本到 live 表（新文章首次发布）
+     */
+    public Long materializeVersionForGray(ArticleVersionDO version) {
+        return materializeVersion(version);
+    }
+
+    /**
+     * 灰度全量发布时调用：物化版本更新到 live 表（已有文章更新）
+     */
+    public void materializeUpdateForGray(ArticleVersionDO version, Long articleId) {
+        materializeUpdateToLiveTables(version, articleId);
     }
 
     // ==================== 核心私有方法 ====================

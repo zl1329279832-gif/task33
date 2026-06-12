@@ -110,3 +110,76 @@ CREATE TABLE IF NOT EXISTS t_user_role
     role        varchar(60) NOT NULL,
     create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 灰度分群规则
+CREATE TABLE IF NOT EXISTS t_gray_segment_rule
+(
+    id          bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id  bigint NOT NULL,
+    article_id  bigint NOT NULL,
+    rule_type   tinyint NOT NULL,
+    rule_config varchar(1000) NOT NULL DEFAULT '{}',
+    is_active   tinyint NOT NULL DEFAULT 1,
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_deleted  tinyint NOT NULL DEFAULT 0
+);
+
+-- 预览令牌
+CREATE TABLE IF NOT EXISTS t_gray_preview_token
+(
+    id          bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id  bigint NOT NULL,
+    article_id  bigint NOT NULL,
+    token       varchar(64) NOT NULL,
+    expire_at   datetime NOT NULL,
+    created_by  varchar(60) NOT NULL DEFAULT '',
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_deleted  tinyint NOT NULL DEFAULT 0
+);
+
+-- 版本曝光日志
+CREATE TABLE IF NOT EXISTS t_gray_exposure_log
+(
+    id               bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id       bigint NOT NULL,
+    article_id       bigint NOT NULL,
+    reader_username  varchar(60) NOT NULL DEFAULT '',
+    access_type      tinyint NOT NULL,
+    access_token     varchar(64) NOT NULL DEFAULT '',
+    create_time      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 灰度反馈
+CREATE TABLE IF NOT EXISTS t_gray_feedback
+(
+    id            bigint AUTO_INCREMENT PRIMARY KEY,
+    version_id    bigint NOT NULL,
+    article_id    bigint NOT NULL,
+    feedback_type tinyint NOT NULL,
+    content       text NULL,
+    reporter      varchar(60) NOT NULL DEFAULT '',
+    create_time   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_deleted    tinyint NOT NULL DEFAULT 0
+);
+
+-- 灰度回滚审计
+CREATE TABLE IF NOT EXISTS t_gray_rollback_audit
+(
+    id                  bigint AUTO_INCREMENT PRIMARY KEY,
+    article_id          bigint NOT NULL,
+    gray_version_id     bigint NOT NULL,
+    restored_version_id bigint NOT NULL DEFAULT 0,
+    reason              varchar(500) NOT NULL DEFAULT '',
+    operator            varchar(60) NOT NULL DEFAULT '',
+    create_time         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 用户标签关联
+CREATE TABLE IF NOT EXISTS t_user_tag
+(
+    id          bigint AUTO_INCREMENT PRIMARY KEY,
+    username    varchar(60) NOT NULL,
+    tag_id      bigint NOT NULL,
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

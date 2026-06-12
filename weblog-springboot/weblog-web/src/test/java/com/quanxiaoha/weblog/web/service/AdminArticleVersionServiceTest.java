@@ -40,6 +40,7 @@ class AdminArticleVersionServiceTest {
     @Mock private AdminArticleTagRelDao articleTagRelDao;
     @Mock private AdminArticleVersionDao articleVersionDao;
     @Mock private AdminCategoryDao categoryDao;
+    @Mock private AdminGrayReleaseDao adminGrayReleaseDao;
 
     @BeforeEach
     void setUp() {
@@ -51,6 +52,7 @@ class AdminArticleVersionServiceTest {
         ReflectionTestUtils.setField(articleService, "articleTagRelDao", articleTagRelDao);
         ReflectionTestUtils.setField(articleService, "articleVersionDao", articleVersionDao);
         ReflectionTestUtils.setField(articleService, "categoryDao", categoryDao);
+        ReflectionTestUtils.setField(articleService, "adminGrayReleaseDao", adminGrayReleaseDao);
     }
 
     // ==================== 草稿保存测试 ====================
